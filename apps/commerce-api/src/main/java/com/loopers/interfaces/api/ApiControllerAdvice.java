@@ -108,6 +108,12 @@ public class ApiControllerAdvice {
     }
 
     @ExceptionHandler
+    public ResponseEntity<ApiResponse<?>> handleIllegalArgument(IllegalArgumentException e) {
+        log.warn("IllegalArgumentException : {}", e.getMessage(), e);
+        return failureResponse(ErrorType.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler
     public ResponseEntity<ApiResponse<?>> handle(Throwable e) {
         log.error("Exception : {}", e.getMessage(), e);
         return failureResponse(ErrorType.INTERNAL_ERROR, null);

@@ -1,8 +1,8 @@
-package com.loopers.interfaces.api;
+package com.loopers.interfaces.api.example;
 
 import com.loopers.domain.example.ExampleModel;
 import com.loopers.infrastructure.example.ExampleJpaRepository;
-import com.loopers.interfaces.api.example.ExampleV1Dto;
+import com.loopers.interfaces.api.ApiResponse;
 import com.loopers.utils.DatabaseCleanUp;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
