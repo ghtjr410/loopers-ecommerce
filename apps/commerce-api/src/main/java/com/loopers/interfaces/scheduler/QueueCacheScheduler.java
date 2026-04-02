@@ -1,11 +1,10 @@
 package com.loopers.interfaces.scheduler;
 
+import com.loopers.application.queue.CapacityService;
 import com.loopers.application.queue.ModeManager;
-import com.loopers.application.queue.SlotService;
 import com.loopers.application.stock.StockService;
 import com.loopers.interfaces.api.queue.filter.EarlyRejectionFilter;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -23,20 +22,20 @@ public class QueueCacheScheduler {
     private final RedisTemplate<String, String> defaultRedisTemplate;
     private final EarlyRejectionFilter earlyRejectionFilter;
     private final ModeManager modeManager;
-    private final SlotService slotService;
+    private final CapacityService capacityService;
     private final StockService stockService;
 
     public QueueCacheScheduler(
             RedisTemplate<String, String> defaultRedisTemplate,
             EarlyRejectionFilter earlyRejectionFilter,
             ModeManager modeManager,
-            SlotService slotService,
+            CapacityService capacityService,
             StockService stockService
     ) {
         this.defaultRedisTemplate = defaultRedisTemplate;
         this.earlyRejectionFilter = earlyRejectionFilter;
         this.modeManager = modeManager;
-        this.slotService = slotService;
+        this.capacityService = capacityService;
         this.stockService = stockService;
     }
 
@@ -52,16 +51,16 @@ public class QueueCacheScheduler {
     }
 
     @Scheduled(fixedRate = 500)
-    public void updateSlotRemaining() {
+    public void updateCapacityRemaining() {
         if (!modeManager.isHot()) return;
         try {
             Map<Long, Long> remaining = new HashMap<>();
             for (Long productId : modeManager.getHotProductIds()) {
-                remaining.put(productId, slotService.getAvailableCount(productId));
+                remaining.put(productId, capacityService.getRemaining(productId));
             }
-            earlyRejectionFilter.updateSlotRemaining(remaining);
+            earlyRejectionFilter.updateCapacityRemaining(remaining);
         } catch (Exception e) {
-            log.warn("Slot 잔여 캐시 갱신 실패", e);
+            log.warn("용량 잔여 캐시 갱신 실패", e);
         }
     }
 

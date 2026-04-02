@@ -12,59 +12,60 @@ public class ModeManager {
 
     public enum Mode { NORMAL, HOT, DRAIN }
 
-    private final QueueProperties queueProperties;
+    public record ModeState(
+            Mode mode,
+            Set<Long> hotProductIds,
+            Map<Long, Integer> maxQuantityPerUserMap,
+            Instant graceDeadline
+    ) {
+        static ModeState normal() {
+            return new ModeState(Mode.NORMAL, Set.of(), Map.of(), Instant.MIN);
+        }
 
-    private volatile Mode currentMode = Mode.NORMAL;
-    private volatile Set<Long> hotProductIds = Set.of();
-    private volatile Map<Long, Integer> maxQuantityPerUserMap = Map.of();
-    private volatile Instant graceDeadline = Instant.MIN;
+        boolean isHot() { return mode == Mode.HOT; }
+        boolean isDrain() { return mode == Mode.DRAIN; }
+        boolean isHotProduct(Long productId) { return hotProductIds.contains(productId); }
+        boolean isInGracePeriod() { return Instant.now().isBefore(graceDeadline); }
+
+        int getMaxQuantityPerUser(Long productId) {
+            return maxQuantityPerUserMap.getOrDefault(productId, 1);
+        }
+    }
+
+    private final QueueProperties queueProperties;
+    private volatile ModeState state = ModeState.normal();
 
     public ModeManager(QueueProperties queueProperties) {
         this.queueProperties = queueProperties;
     }
 
-    public Mode getCurrentMode() {
-        return currentMode;
-    }
+    public ModeState getState() { return state; }
 
-    public boolean isHot() {
-        return currentMode == Mode.HOT;
-    }
+    // 편의 메서드 — state에 위임
 
-    public boolean isDrain() {
-        return currentMode == Mode.DRAIN;
-    }
+    public boolean isHot() { return state.isHot(); }
+    public boolean isDrain() { return state.isDrain(); }
+    public boolean isHotProduct(Long productId) { return state.isHotProduct(productId); }
+    public boolean isInGracePeriod() { return state.isInGracePeriod(); }
+    public Set<Long> getHotProductIds() { return state.hotProductIds(); }
+    public int getMaxQuantityPerUser(Long productId) { return state.getMaxQuantityPerUser(productId); }
 
-    public boolean isHotProduct(Long productId) {
-        return hotProductIds.contains(productId);
-    }
+    // 원자적 전환 — volatile write 1회
 
-    public boolean isInGracePeriod() {
-        return Instant.now().isBefore(graceDeadline);
-    }
-
-    public Set<Long> getHotProductIds() {
-        return hotProductIds;
-    }
-
-    public int getMaxQuantityPerUser(Long productId) {
-        return maxQuantityPerUserMap.getOrDefault(productId, Integer.MAX_VALUE);
-    }
-
-    public void switchToHot(Set<Long> productIds, Map<Long, Integer> maxQuantityPerUser) {
-        this.hotProductIds = Set.copyOf(productIds);
-        this.maxQuantityPerUserMap = Map.copyOf(maxQuantityPerUser);
-        this.graceDeadline = Instant.now().plusSeconds(queueProperties.getGracePeriodSeconds());
-        this.currentMode = Mode.HOT;
+    public void switchToHot(Set<Long> productIds, Map<Long, Integer> maxQtyMap) {
+        this.state = new ModeState(
+                Mode.HOT, Set.copyOf(productIds), Map.copyOf(maxQtyMap),
+                Instant.now().plusSeconds(queueProperties.getGracePeriodSeconds())
+        );
     }
 
     public void switchToDrain() {
-        this.currentMode = Mode.DRAIN;
+        ModeState cur = this.state;
+        this.state = new ModeState(Mode.DRAIN, cur.hotProductIds(),
+                cur.maxQuantityPerUserMap(), cur.graceDeadline());
     }
 
     public void switchToNormal() {
-        this.currentMode = Mode.NORMAL;
-        this.hotProductIds = Set.of();
-        this.maxQuantityPerUserMap = Map.of();
+        this.state = ModeState.normal();
     }
 }

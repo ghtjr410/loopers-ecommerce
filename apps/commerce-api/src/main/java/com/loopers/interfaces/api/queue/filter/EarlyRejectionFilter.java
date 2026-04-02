@@ -29,7 +29,7 @@ public class EarlyRejectionFilter extends OncePerRequestFilter {
     private final ObjectMapper objectMapper;
 
     private volatile Set<Long> soldOutProducts = Set.of();
-    private volatile Map<Long, Long> slotRemaining = Map.of();
+    private volatile Map<Long, Long> capacityRemaining = Map.of();
     private volatile Map<Long, Long> queueSizes = Map.of();
 
     @Override
@@ -72,7 +72,7 @@ public class EarlyRejectionFilter extends OncePerRequestFilter {
 
     private boolean isSoldOut(Long productId) {
         if (modeManager.isHotProduct(productId)) {
-            Long remaining = slotRemaining.get(productId);
+            Long remaining = capacityRemaining.get(productId);
             return remaining != null && remaining <= 0;
         }
         return soldOutProducts.contains(productId);
@@ -87,8 +87,8 @@ public class EarlyRejectionFilter extends OncePerRequestFilter {
         this.soldOutProducts = products;
     }
 
-    public void updateSlotRemaining(Map<Long, Long> remaining) {
-        this.slotRemaining = remaining;
+    public void updateCapacityRemaining(Map<Long, Long> remaining) {
+        this.capacityRemaining = remaining;
     }
 
     public void updateQueueSizes(Map<Long, Long> sizes) {

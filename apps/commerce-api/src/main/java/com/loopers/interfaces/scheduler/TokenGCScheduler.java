@@ -1,7 +1,7 @@
 package com.loopers.interfaces.scheduler;
 
+import com.loopers.application.queue.CapacityService;
 import com.loopers.application.queue.ModeManager;
-import com.loopers.application.queue.SlotService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -15,21 +15,20 @@ import java.util.Set;
 @Component
 public class TokenGCScheduler {
 
-    private static final String SLOT_EXPIRY_KEY = "slot-expiry:";
+    private static final String TOKEN_TRACKER_KEY = "token-tracker:";
     private static final String ENTRY_TOKEN_KEY = "entry-token:";
-    private static final String SLOT_ASSIGNMENT_KEY = "slot-assignment:";
 
     private final RedisTemplate<String, String> masterRedisTemplate;
-    private final SlotService slotService;
+    private final CapacityService capacityService;
     private final ModeManager modeManager;
 
     public TokenGCScheduler(
             @Qualifier("redisTemplateMaster") RedisTemplate<String, String> masterRedisTemplate,
-            SlotService slotService,
+            CapacityService capacityService,
             ModeManager modeManager
     ) {
         this.masterRedisTemplate = masterRedisTemplate;
-        this.slotService = slotService;
+        this.capacityService = capacityService;
         this.modeManager = modeManager;
     }
 
@@ -41,39 +40,38 @@ public class TokenGCScheduler {
 
         for (Long productId : modeManager.getHotProductIds()) {
             try {
-                processExpiredSlots(productId);
+                processExpiredTokens(productId);
             } catch (Exception e) {
                 log.warn("TokenGC 실패: productId={}", productId, e);
             }
         }
     }
 
-    private void processExpiredSlots(Long productId) {
-        String expiryKey = SLOT_EXPIRY_KEY + productId;
+    private void processExpiredTokens(Long productId) {
+        String trackerKey = TOKEN_TRACKER_KEY + productId;
         double now = Instant.now().toEpochMilli() / 1000.0;
 
         Set<String> expiredMembers = masterRedisTemplate.opsForZSet()
-                .rangeByScore(expiryKey, 0, now);
+                .rangeByScore(trackerKey, 0, now);
 
         if (expiredMembers == null || expiredMembers.isEmpty()) {
             return;
         }
 
-        for (String member : expiredMembers) {
-            String[] parts = member.split(":");
-            if (parts.length != 2) continue;
-
-            Long userId = Long.parseLong(parts[0]);
-            String slotId = parts[1];
+        for (String userId : expiredMembers) {
+            Long userIdLong = Long.parseLong(userId);
 
             Boolean tokenExists = masterRedisTemplate.hasKey(
                     ENTRY_TOKEN_KEY + userId + ":" + productId);
 
             if (Boolean.FALSE.equals(tokenExists)) {
-                slotService.releaseSlot(productId, slotId);
-                masterRedisTemplate.opsForZSet().remove(expiryKey, member);
-                masterRedisTemplate.delete(SLOT_ASSIGNMENT_KEY + userId + ":" + productId);
-                log.debug("Slot 회수: productId={}, userId={}, slotId={}", productId, userId, slotId);
+                boolean restored = capacityService.tryRestore(userIdLong, productId);
+                masterRedisTemplate.opsForZSet().remove(trackerKey, userId);
+                if (restored) {
+                    log.debug("용량 복구: productId={}, userId={}", productId, userId);
+                } else {
+                    log.debug("결제 완료 건 skip: productId={}, userId={}", productId, userId);
+                }
             }
         }
     }

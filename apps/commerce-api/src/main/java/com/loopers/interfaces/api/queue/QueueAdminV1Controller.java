@@ -1,7 +1,7 @@
 package com.loopers.interfaces.api.queue;
 
+import com.loopers.application.queue.CapacityService;
 import com.loopers.application.queue.ModeManager;
-import com.loopers.application.queue.SlotService;
 import com.loopers.application.stock.StockService;
 import com.loopers.domain.stock.Stock;
 import com.loopers.interfaces.api.ApiResponse;
@@ -21,7 +21,7 @@ import java.util.Set;
 public class QueueAdminV1Controller {
 
     private final ModeManager modeManager;
-    private final SlotService slotService;
+    private final CapacityService capacityService;
     private final StockService stockService;
 
     // Command
@@ -44,7 +44,7 @@ public class QueueAdminV1Controller {
             Stock stock = stockService.getStock(productId);
             int available = stock.getAvailableQuantity();
             int maxQty = maxQuantityPerUserMap.get(productId);
-            slotService.initializeSlots(productId, available, maxQty);
+            capacityService.initializeCapacity(productId, available, maxQty);
         }
 
         modeManager.switchToHot(productIds, maxQuantityPerUserMap);
@@ -53,6 +53,6 @@ public class QueueAdminV1Controller {
     private void deactivateHotMode() {
         Set<Long> previousHotProducts = modeManager.getHotProductIds();
         modeManager.switchToNormal();
-        previousHotProducts.forEach(slotService::clearSlots);
+        previousHotProducts.forEach(capacityService::clearCapacity);
     }
 }

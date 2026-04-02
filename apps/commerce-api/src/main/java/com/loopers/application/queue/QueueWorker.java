@@ -3,17 +3,17 @@ package com.loopers.application.queue;
 import com.loopers.interfaces.api.queue.config.QueueProperties;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 
 @Slf4j
 @Component
@@ -21,19 +21,27 @@ public class QueueWorker {
 
     private static final String WAITING_QUEUE_KEY = "waiting-queue:";
     private static final String PROCESSING_QUEUE_KEY = "processing-queue:";
+    private static final String CAPACITY_KEY = "purchase-capacity:";
+    private static final String ENTRY_TOKEN_KEY = "entry-token:";
+    private static final String TOKEN_TRACKER_KEY = "token-tracker:";
 
-    private static final String ZPOPMIN_TO_PROCESSING_LUA =
+    private static final String WORKER_LUA =
             "local result = redis.call('ZPOPMIN', KEYS[1]) " +
             "if #result == 0 then return nil end " +
             "local userId = result[1] " +
             "local originalScore = result[2] " +
             "local member = userId .. ':' .. originalScore " +
             "redis.call('ZADD', KEYS[2], ARGV[1], member) " +
+            "local cap = redis.call('DECR', KEYS[3]) " +
+            "if cap < 0 then " +
+            "  redis.call('INCR', KEYS[3]) " +
+            "  redis.call('ZADD', KEYS[1], originalScore, userId) " +
+            "  redis.call('ZREM', KEYS[2], member) " +
+            "  return {'NO_CAPACITY'} " +
+            "end " +
             "return {userId, originalScore}";
 
     private final RedisTemplate<String, String> masterRedisTemplate;
-    private final QueueService queueService;
-    private final SlotService slotService;
     private final ModeManager modeManager;
     private final QueueProperties props;
 
@@ -41,14 +49,10 @@ public class QueueWorker {
 
     public QueueWorker(
             @Qualifier("redisTemplateMaster") RedisTemplate<String, String> masterRedisTemplate,
-            QueueService queueService,
-            SlotService slotService,
             ModeManager modeManager,
             QueueProperties props
     ) {
         this.masterRedisTemplate = masterRedisTemplate;
-        this.queueService = queueService;
-        this.slotService = slotService;
         this.modeManager = modeManager;
         this.props = props;
     }
@@ -97,14 +101,18 @@ public class QueueWorker {
     private boolean processOne(Long productId) {
         String waitingKey = WAITING_QUEUE_KEY + productId;
         String processingKey = PROCESSING_QUEUE_KEY + productId;
+        String capacityKey = CAPACITY_KEY + productId;
         double now = Instant.now().toEpochMilli() / 1000.0;
 
-        DefaultRedisScript<List> script = new DefaultRedisScript<>(ZPOPMIN_TO_PROCESSING_LUA, List.class);
+        DefaultRedisScript<List> script = new DefaultRedisScript<>(WORKER_LUA, List.class);
         List<?> result = masterRedisTemplate.execute(script,
-                Arrays.asList(waitingKey, processingKey),
+                Arrays.asList(waitingKey, processingKey, capacityKey),
                 String.valueOf(now));
 
         if (result == null || result.isEmpty()) {
+            return false;
+        }
+        if ("NO_CAPACITY".equals(result.get(0).toString())) {
             return false;
         }
 
@@ -113,14 +121,21 @@ public class QueueWorker {
         Long userIdLong = Long.parseLong(userId);
         String processingMember = userId + ":" + originalScore;
 
-        String slotId = slotService.acquireSlot(productId);
+        try {
+            String token = UUID.randomUUID().toString();
+            masterRedisTemplate.opsForValue().set(
+                    ENTRY_TOKEN_KEY + userIdLong + ":" + productId,
+                    token, Duration.ofSeconds(props.getAccessTtlSeconds())
+            );
 
-        if (slotId != null) {
-            queueService.issueToken(userIdLong, productId, slotId);
+            double expiryTime = System.currentTimeMillis() / 1000.0 + props.getHardTtlSeconds();
+            masterRedisTemplate.opsForZSet().add(
+                    TOKEN_TRACKER_KEY + productId, userId, expiryTime
+            );
+
             masterRedisTemplate.opsForZSet().remove(processingKey, processingMember);
-        } else {
-            masterRedisTemplate.opsForZSet().add(waitingKey, userId, Double.parseDouble(originalScore));
-            masterRedisTemplate.opsForZSet().remove(processingKey, processingMember);
+        } catch (Exception e) {
+            log.error("토큰 발급 실패. userId={}, productId={}. Recovery 예정.", userIdLong, productId, e);
         }
 
         return true;

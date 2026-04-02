@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class QueueProperties {
 
     // 대기열
-    private int maxQueueSize = 1000;
+    private int maxQueueSize = 10000;
 
     // TTL (초 단위)
     private int accessTtlSeconds = 60;
@@ -22,6 +22,9 @@ public class QueueProperties {
     private long gcIntervalMs = 10_000;
     private long processingRecoveryIntervalMs = 30_000;
     private int processingTimeoutSeconds = 60;
+
+    // token-consumed TTL (Hard TTL + 여유)
+    private int consumedTtlSeconds = 600;
 
     // Rate Limit
     private int ipRateLimitPerSecond = 50;
@@ -150,5 +153,13 @@ public class QueueProperties {
 
     public void setOrderLimitPerMinute(int orderLimitPerMinute) {
         this.orderLimitPerMinute = orderLimitPerMinute;
+    }
+
+    public int getConsumedTtlSeconds() {
+        return consumedTtlSeconds;
+    }
+
+    public void setConsumedTtlSeconds(int consumedTtlSeconds) {
+        this.consumedTtlSeconds = consumedTtlSeconds;
     }
 }

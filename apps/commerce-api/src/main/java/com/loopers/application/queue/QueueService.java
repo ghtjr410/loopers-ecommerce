@@ -17,27 +17,24 @@ import java.util.concurrent.TimeUnit;
 public class QueueService {
 
     private static final String ENTRY_TOKEN_KEY = "entry-token:";
-    private static final String SLOT_ASSIGNMENT_KEY = "slot-assignment:";
-    private static final String SLOT_EXPIRY_KEY = "slot-expiry:";
+    private static final String CAPACITY_KEY = "purchase-capacity:";
+    private static final String TOKEN_TRACKER_KEY = "token-tracker:";
     private static final String WAITING_QUEUE_KEY = "waiting-queue:";
 
     private final RedisTemplate<String, String> masterRedisTemplate;
     private final RedisTemplate<String, String> defaultRedisTemplate;
     private final ModeManager modeManager;
-    private final SlotService slotService;
     private final QueueProperties props;
 
     public QueueService(
             @Qualifier("redisTemplateMaster") RedisTemplate<String, String> masterRedisTemplate,
             RedisTemplate<String, String> defaultRedisTemplate,
             ModeManager modeManager,
-            SlotService slotService,
             QueueProperties props
     ) {
         this.masterRedisTemplate = masterRedisTemplate;
         this.defaultRedisTemplate = defaultRedisTemplate;
         this.modeManager = modeManager;
-        this.slotService = slotService;
         this.props = props;
     }
 
@@ -50,20 +47,16 @@ public class QueueService {
         return enterHotQueue(userId, productId);
     }
 
-    public void issueToken(Long userId, Long productId, String slotId) {
+    public void issueToken(Long userId, Long productId) {
         String token = UUID.randomUUID().toString();
-        String tokenKey = tokenKey(userId, productId);
-        int accessTtl = props.getAccessTtlSeconds();
-        int hardTtl = props.getHardTtlSeconds();
-
-        masterRedisTemplate.opsForValue().set(tokenKey, token, accessTtl, TimeUnit.SECONDS);
         masterRedisTemplate.opsForValue().set(
-                slotAssignmentKey(userId, productId), slotId, hardTtl, TimeUnit.SECONDS
+                tokenKey(userId, productId), token, props.getAccessTtlSeconds(), TimeUnit.SECONDS
         );
 
-        double expiryScore = Instant.now().plusSeconds(hardTtl).toEpochMilli() / 1000.0;
-        String expiryMember = userId + ":" + slotId;
-        masterRedisTemplate.opsForZSet().add(SLOT_EXPIRY_KEY + productId, expiryMember, expiryScore);
+        double expiryScore = Instant.now().plusSeconds(props.getHardTtlSeconds()).toEpochMilli() / 1000.0;
+        masterRedisTemplate.opsForZSet().add(
+                TOKEN_TRACKER_KEY + productId, userId.toString(), expiryScore
+        );
     }
 
     public boolean extendTokenTtl(Long userId, Long productId) {
@@ -72,29 +65,14 @@ public class QueueService {
         }
 
         String tokenKey = tokenKey(userId, productId);
-        String slotExpiryKey = SLOT_EXPIRY_KEY + productId;
+        String trackerKey = TOKEN_TRACKER_KEY + productId;
 
-        Set<String> members = masterRedisTemplate.opsForZSet().rangeByScore(
-                slotExpiryKey,
-                Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY
-        );
-        if (members == null) {
+        Double expiryScore = masterRedisTemplate.opsForZSet().score(trackerKey, userId.toString());
+        if (expiryScore == null) {
             return false;
         }
 
-        String prefix = userId + ":";
-        Double issuedScore = null;
-        for (String member : members) {
-            if (member.startsWith(prefix)) {
-                issuedScore = masterRedisTemplate.opsForZSet().score(slotExpiryKey, member);
-                break;
-            }
-        }
-        if (issuedScore == null) {
-            return false;
-        }
-
-        double issuedAt = issuedScore - props.getHardTtlSeconds();
+        double issuedAt = expiryScore - props.getHardTtlSeconds();
         double now = Instant.now().toEpochMilli() / 1000.0;
         if (issuedAt + props.getHardTtlSeconds() < now + props.getActivityExtensionSeconds()) {
             return false;
@@ -106,18 +84,7 @@ public class QueueService {
 
     public void deleteToken(Long userId, Long productId) {
         masterRedisTemplate.delete(tokenKey(userId, productId));
-        masterRedisTemplate.delete(slotAssignmentKey(userId, productId));
-
-        String slotExpiryKey = SLOT_EXPIRY_KEY + productId;
-        Set<String> members = masterRedisTemplate.opsForZSet().rangeByScore(
-                slotExpiryKey, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY
-        );
-        if (members != null) {
-            String prefix = userId + ":";
-            members.stream()
-                    .filter(m -> m.startsWith(prefix))
-                    .forEach(m -> masterRedisTemplate.opsForZSet().remove(slotExpiryKey, m));
-        }
+        masterRedisTemplate.opsForZSet().remove(TOKEN_TRACKER_KEY + productId, userId.toString());
     }
 
     // Query
@@ -145,8 +112,9 @@ public class QueueService {
 
     private QueueEntryResponse issueImmediateToken(Long userId, Long productId) {
         String token = UUID.randomUUID().toString();
-        String tokenKey = tokenKey(userId, productId);
-        masterRedisTemplate.opsForValue().set(tokenKey, token, props.getAccessTtlSeconds(), TimeUnit.SECONDS);
+        masterRedisTemplate.opsForValue().set(
+                tokenKey(userId, productId), token, props.getAccessTtlSeconds(), TimeUnit.SECONDS
+        );
         return QueueEntryResponse.immediate(token);
     }
 
@@ -155,25 +123,20 @@ public class QueueService {
         Long queueSize = masterRedisTemplate.opsForZSet().zCard(waitingKey);
 
         if (queueSize != null && queueSize == 0) {
-            String slotId = slotService.acquireSlot(productId);
-            if (slotId != null) {
+            Long cap = masterRedisTemplate.opsForValue().decrement(CAPACITY_KEY + productId);
+            if (cap != null && cap >= 0) {
                 String token = UUID.randomUUID().toString();
-                String tokenKey = tokenKey(userId, productId);
-                int accessTtl = props.getAccessTtlSeconds();
-                int hardTtl = props.getHardTtlSeconds();
-
-                masterRedisTemplate.opsForValue().set(tokenKey, token, accessTtl, TimeUnit.SECONDS);
                 masterRedisTemplate.opsForValue().set(
-                        slotAssignmentKey(userId, productId), slotId, hardTtl, TimeUnit.SECONDS
+                        tokenKey(userId, productId), token, props.getAccessTtlSeconds(), TimeUnit.SECONDS
                 );
-
-                double expiryScore = Instant.now().plusSeconds(hardTtl).toEpochMilli() / 1000.0;
+                double expiryScore = Instant.now().plusSeconds(props.getHardTtlSeconds()).toEpochMilli() / 1000.0;
                 masterRedisTemplate.opsForZSet().add(
-                        SLOT_EXPIRY_KEY + productId, userId + ":" + slotId, expiryScore
+                        TOKEN_TRACKER_KEY + productId, userId.toString(), expiryScore
                 );
-
                 return QueueEntryResponse.immediate(token);
             }
+            // 롤백
+            masterRedisTemplate.opsForValue().increment(CAPACITY_KEY + productId);
         }
 
         double score = Instant.now().toEpochMilli() / 1000.0;
@@ -191,9 +154,5 @@ public class QueueService {
 
     private String tokenKey(Long userId, Long productId) {
         return ENTRY_TOKEN_KEY + userId + ":" + productId;
-    }
-
-    private String slotAssignmentKey(Long userId, Long productId) {
-        return SLOT_ASSIGNMENT_KEY + userId + ":" + productId;
     }
 }
