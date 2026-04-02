@@ -64,4 +64,9 @@ public class StockRepositoryImpl implements StockRepository {
     public Set<Long> findProductIdsWithReservedStock() {
         return stockJpaRepository.findProductIdsWithReservedStock();
     }
+
+    @Override
+    public Set<Long> findSoldOutProductIds() {
+        return stockJpaRepository.findSoldOutProductIds();
+    }
 }

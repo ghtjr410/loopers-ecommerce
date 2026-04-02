@@ -48,4 +48,7 @@ public interface StockJpaRepository extends JpaRepository<Stock, Long> {
 
     @Query("SELECT s.productId FROM Stock s WHERE s.reservedQuantity > 0")
     Set<Long> findProductIdsWithReservedStock();
+
+    @Query("SELECT s.productId FROM Stock s WHERE s.quantity - s.reservedQuantity - s.confirmedQuantity <= 0")
+    Set<Long> findSoldOutProductIds();
 }

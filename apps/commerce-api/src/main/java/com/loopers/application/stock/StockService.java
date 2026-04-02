@@ -94,4 +94,9 @@ public class StockService {
     public Set<Long> findProductIdsWithReservedStock() {
         return stockRepository.findProductIdsWithReservedStock();
     }
+
+    @Transactional(readOnly = true)
+    public Set<Long> findSoldOutProductIds() {
+        return stockRepository.findSoldOutProductIds();
+    }
 }

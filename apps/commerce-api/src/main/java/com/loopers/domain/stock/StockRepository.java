@@ -19,4 +19,5 @@ public interface StockRepository {
     Optional<Stock> findByProductId(Long productId);
     List<Stock> findAllByProductIdIn(Collection<Long> productIds);
     Set<Long> findProductIdsWithReservedStock();
+    Set<Long> findSoldOutProductIds();
 }
