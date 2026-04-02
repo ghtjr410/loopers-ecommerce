@@ -3,15 +3,19 @@ package com.loopers.application.queue;
 import com.loopers.application.queue.dto.QueueEntryResponse;
 import com.loopers.application.queue.dto.QueuePositionResponse;
 import com.loopers.interfaces.api.queue.config.QueueProperties;
+import com.loopers.interfaces.scheduler.PositionCacheScheduler;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 @Service
 public class QueueService {
@@ -20,22 +24,34 @@ public class QueueService {
     private static final String CAPACITY_KEY = "purchase-capacity:";
     private static final String TOKEN_TRACKER_KEY = "token-tracker:";
     private static final String WAITING_QUEUE_KEY = "waiting-queue:";
+    private static final String EXTEND_RATE_KEY = "rate:extend:";
+
+    private static final String EXTEND_RATE_LUA =
+            "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1]) " +
+            "local count = redis.call('ZCARD', KEYS[1]) " +
+            "if count >= tonumber(ARGV[3]) then return 0 end " +
+            "redis.call('ZADD', KEYS[1], ARGV[2], ARGV[4]) " +
+            "redis.call('EXPIRE', KEYS[1], 60) " +
+            "return 1";
 
     private final RedisTemplate<String, String> masterRedisTemplate;
     private final RedisTemplate<String, String> defaultRedisTemplate;
     private final ModeManager modeManager;
     private final QueueProperties props;
+    private final PositionCacheScheduler positionCacheScheduler;
 
     public QueueService(
             @Qualifier("redisTemplateMaster") RedisTemplate<String, String> masterRedisTemplate,
             RedisTemplate<String, String> defaultRedisTemplate,
             ModeManager modeManager,
-            QueueProperties props
+            QueueProperties props,
+            PositionCacheScheduler positionCacheScheduler
     ) {
         this.masterRedisTemplate = masterRedisTemplate;
         this.defaultRedisTemplate = defaultRedisTemplate;
         this.modeManager = modeManager;
         this.props = props;
+        this.positionCacheScheduler = positionCacheScheduler;
     }
 
     // Command
@@ -78,8 +94,28 @@ public class QueueService {
             return false;
         }
 
+        if (!checkExtendRateLimit(userId, productId)) {
+            return false;
+        }
+
         masterRedisTemplate.expire(tokenKey, Duration.ofSeconds(props.getActivityExtensionSeconds()));
         return true;
+    }
+
+    private boolean checkExtendRateLimit(Long userId, Long productId) {
+        String key = EXTEND_RATE_KEY + userId + ":" + productId;
+        double now = System.currentTimeMillis() / 1000.0;
+        double windowStart = now - 60;
+
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>(EXTEND_RATE_LUA, Long.class);
+        Long allowed = masterRedisTemplate.execute(script,
+                Collections.singletonList(key),
+                String.valueOf(windowStart),
+                String.valueOf(now),
+                String.valueOf(props.getMaxExtensionsPerMinute()),
+                UUID.randomUUID().toString());
+
+        return allowed != null && allowed == 1;
     }
 
     public void deleteToken(Long userId, Long productId) {
@@ -98,6 +134,11 @@ public class QueueService {
         String token = masterRedisTemplate.opsForValue().get(tokenKey(userId, productId));
         if (token != null) {
             return QueuePositionResponse.ready(token);
+        }
+
+        Long cachedPosition = positionCacheScheduler.getCachedPosition(productId, userId);
+        if (cachedPosition != null) {
+            return QueuePositionResponse.waiting(cachedPosition, estimateWaitSeconds(cachedPosition));
         }
 
         Long rank = defaultRedisTemplate.opsForZSet().rank(WAITING_QUEUE_KEY + productId, userId.toString());
