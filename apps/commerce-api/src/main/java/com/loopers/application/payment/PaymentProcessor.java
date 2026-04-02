@@ -45,6 +45,7 @@ public class PaymentProcessor {
         for (OrderItem item : order.getOrderItems()) {
             capacityService.markConsumed(order.getUserId(), item.getProductId());
             queueService.deleteToken(order.getUserId(), item.getProductId());
+            capacityService.deleteQuantity(order.getUserId(), item.getProductId());
         }
         eventPublisher.publishEvent(new PaymentCompletedEvent(
                 paymentId, orderId, payment.getUserId(), payment.getAmount()));

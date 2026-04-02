@@ -8,9 +8,13 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import com.loopers.support.error.CoreException;
+import com.loopers.support.error.ErrorType;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -26,6 +30,14 @@ public class QueueService {
     private static final String WAITING_QUEUE_KEY = "waiting-queue:";
     private static final String EXTEND_RATE_KEY = "rate:extend:";
 
+    private static final String ENTER_CAPACITY_LUA =
+            "local cap = redis.call('DECRBY', KEYS[1], ARGV[1]) " +
+            "if cap < 0 then " +
+            "  redis.call('INCRBY', KEYS[1], ARGV[1]) " +
+            "  return 0 " +
+            "end " +
+            "return 1";
+
     private static final String EXTEND_RATE_LUA =
             "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1]) " +
             "local count = redis.call('ZCARD', KEYS[1]) " +
@@ -37,6 +49,7 @@ public class QueueService {
     private final RedisTemplate<String, String> masterRedisTemplate;
     private final RedisTemplate<String, String> defaultRedisTemplate;
     private final ModeManager modeManager;
+    private final CapacityService capacityService;
     private final QueueProperties props;
     private final PositionCacheScheduler positionCacheScheduler;
 
@@ -44,12 +57,14 @@ public class QueueService {
             @Qualifier("redisTemplateMaster") RedisTemplate<String, String> masterRedisTemplate,
             RedisTemplate<String, String> defaultRedisTemplate,
             ModeManager modeManager,
+            CapacityService capacityService,
             QueueProperties props,
             PositionCacheScheduler positionCacheScheduler
     ) {
         this.masterRedisTemplate = masterRedisTemplate;
         this.defaultRedisTemplate = defaultRedisTemplate;
         this.modeManager = modeManager;
+        this.capacityService = capacityService;
         this.props = props;
         this.positionCacheScheduler = positionCacheScheduler;
     }
@@ -60,7 +75,14 @@ public class QueueService {
         if (!modeManager.isHotProduct(productId)) {
             return issueImmediateToken(userId, productId);
         }
-        return enterHotQueue(userId, productId);
+
+        int maxQty = modeManager.getMaxQuantityPerUser(productId);
+        if (quantity > maxQty) {
+            throw new CoreException(ErrorType.BAD_REQUEST, "인당 최대 " + maxQty + "개까지 주문 가능합니다");
+        }
+
+        capacityService.recordQuantity(userId, productId, quantity);
+        return enterHotQueue(userId, productId, quantity);
     }
 
     public void issueToken(Long userId, Long productId) {
@@ -159,13 +181,17 @@ public class QueueService {
         return QueueEntryResponse.immediate(token);
     }
 
-    private QueueEntryResponse enterHotQueue(Long userId, Long productId) {
+    private QueueEntryResponse enterHotQueue(Long userId, Long productId, int quantity) {
         String waitingKey = WAITING_QUEUE_KEY + productId;
         Long queueSize = masterRedisTemplate.opsForZSet().zCard(waitingKey);
 
         if (queueSize != null && queueSize == 0) {
-            Long cap = masterRedisTemplate.opsForValue().decrement(CAPACITY_KEY + productId);
-            if (cap != null && cap >= 0) {
+            DefaultRedisScript<Long> capScript = new DefaultRedisScript<>(ENTER_CAPACITY_LUA, Long.class);
+            Long capResult = masterRedisTemplate.execute(capScript,
+                    List.of(CAPACITY_KEY + productId),
+                    String.valueOf(quantity));
+
+            if (capResult != null && capResult == 1) {
                 String token = UUID.randomUUID().toString();
                 masterRedisTemplate.opsForValue().set(
                         tokenKey(userId, productId), token, props.getAccessTtlSeconds(), TimeUnit.SECONDS
@@ -176,8 +202,6 @@ public class QueueService {
                 );
                 return QueueEntryResponse.immediate(token);
             }
-            // 롤백
-            masterRedisTemplate.opsForValue().increment(CAPACITY_KEY + productId);
         }
 
         double score = Instant.now().toEpochMilli() / 1000.0;

@@ -13,6 +13,7 @@ public class CapacityService {
     private static final String CAPACITY_KEY = "purchase-capacity:";
     private static final String TOKEN_TRACKER_KEY = "token-tracker:";
     private static final String TOKEN_CONSUMED_KEY = "token-consumed:";
+    private static final String TOKEN_QUANTITY_KEY = "token-quantity:";
 
     private final RedisTemplate<String, String> masterRedisTemplate;
     private final QueueProperties props;
@@ -25,9 +26,8 @@ public class CapacityService {
         this.props = props;
     }
 
-    public void initializeCapacity(Long productId, int available, int maxQuantityPerUser) {
-        int capacity = available / maxQuantityPerUser;
-        masterRedisTemplate.opsForValue().set(CAPACITY_KEY + productId, String.valueOf(capacity));
+    public void initializeCapacity(Long productId, int available) {
+        masterRedisTemplate.opsForValue().set(CAPACITY_KEY + productId, String.valueOf(available));
     }
 
     public long getRemaining(Long productId) {
@@ -40,8 +40,23 @@ public class CapacityService {
         if (Boolean.TRUE.equals(masterRedisTemplate.hasKey(consumedKey))) {
             return false;
         }
-        masterRedisTemplate.opsForValue().increment(CAPACITY_KEY + productId);
+        String qtyKey = TOKEN_QUANTITY_KEY + userId + ":" + productId;
+        String qtyStr = masterRedisTemplate.opsForValue().get(qtyKey);
+        long quantity = qtyStr != null ? Long.parseLong(qtyStr) : 1;
+        masterRedisTemplate.opsForValue().increment(CAPACITY_KEY + productId, quantity);
+        masterRedisTemplate.delete(qtyKey);
         return true;
+    }
+
+    public void recordQuantity(Long userId, Long productId, int quantity) {
+        masterRedisTemplate.opsForValue().set(
+                TOKEN_QUANTITY_KEY + userId + ":" + productId,
+                String.valueOf(quantity), Duration.ofSeconds(props.getConsumedTtlSeconds())
+        );
+    }
+
+    public void deleteQuantity(Long userId, Long productId) {
+        masterRedisTemplate.delete(TOKEN_QUANTITY_KEY + userId + ":" + productId);
     }
 
     public void markConsumed(Long userId, Long productId) {

@@ -24,6 +24,7 @@ public class QueueWorker {
     private static final String CAPACITY_KEY = "purchase-capacity:";
     private static final String ENTRY_TOKEN_KEY = "entry-token:";
     private static final String TOKEN_TRACKER_KEY = "token-tracker:";
+    private static final String TOKEN_QUANTITY_KEY = "token-quantity:";
 
     private static final String WORKER_LUA =
             "local result = redis.call('ZPOPMIN', KEYS[1]) " +
@@ -32,13 +33,6 @@ public class QueueWorker {
             "local originalScore = result[2] " +
             "local member = userId .. ':' .. originalScore " +
             "redis.call('ZADD', KEYS[2], ARGV[1], member) " +
-            "local cap = redis.call('DECR', KEYS[3]) " +
-            "if cap < 0 then " +
-            "  redis.call('INCR', KEYS[3]) " +
-            "  redis.call('ZADD', KEYS[1], originalScore, userId) " +
-            "  redis.call('ZREM', KEYS[2], member) " +
-            "  return {'NO_CAPACITY'} " +
-            "end " +
             "return {userId, originalScore}";
 
     private final RedisTemplate<String, String> masterRedisTemplate;
@@ -101,18 +95,14 @@ public class QueueWorker {
     private boolean processOne(Long productId) {
         String waitingKey = WAITING_QUEUE_KEY + productId;
         String processingKey = PROCESSING_QUEUE_KEY + productId;
-        String capacityKey = CAPACITY_KEY + productId;
         double now = Instant.now().toEpochMilli() / 1000.0;
 
         DefaultRedisScript<List> script = new DefaultRedisScript<>(WORKER_LUA, List.class);
         List<?> result = masterRedisTemplate.execute(script,
-                Arrays.asList(waitingKey, processingKey, capacityKey),
+                Arrays.asList(waitingKey, processingKey),
                 String.valueOf(now));
 
         if (result == null || result.isEmpty()) {
-            return false;
-        }
-        if ("NO_CAPACITY".equals(result.get(0).toString())) {
             return false;
         }
 
@@ -120,6 +110,23 @@ public class QueueWorker {
         String originalScore = result.get(1).toString();
         Long userIdLong = Long.parseLong(userId);
         String processingMember = userId + ":" + originalScore;
+
+        // 수량 조회 (enter() 시 저장됨)
+        String qtyKey = TOKEN_QUANTITY_KEY + userIdLong + ":" + productId;
+        String qtyStr = masterRedisTemplate.opsForValue().get(qtyKey);
+        int quantity = qtyStr != null ? Integer.parseInt(qtyStr) : 1;
+
+        // 용량 확인 (DECRBY — Redis 원자적 명령, Lua 밖)
+        Long remaining = masterRedisTemplate.opsForValue()
+                .decrement(CAPACITY_KEY + productId, quantity);
+        if (remaining != null && remaining < 0) {
+            masterRedisTemplate.opsForValue()
+                    .increment(CAPACITY_KEY + productId, quantity);
+            masterRedisTemplate.opsForZSet()
+                    .add(waitingKey, userId, Double.parseDouble(originalScore));
+            masterRedisTemplate.opsForZSet().remove(processingKey, processingMember);
+            return false;
+        }
 
         try {
             String token = UUID.randomUUID().toString();

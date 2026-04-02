@@ -19,6 +19,7 @@ public class ProcessingRecoveryScheduler {
     private static final String WAITING_QUEUE_KEY = "waiting-queue:";
     private static final String CAPACITY_KEY = "purchase-capacity:";
     private static final String ENTRY_TOKEN_KEY = "entry-token:";
+    private static final String TOKEN_QUANTITY_KEY = "token-quantity:";
 
     private final RedisTemplate<String, String> masterRedisTemplate;
     private final ModeManager modeManager;
@@ -73,11 +74,15 @@ public class ProcessingRecoveryScheduler {
                     ENTRY_TOKEN_KEY + userId + ":" + productId);
 
             if (Boolean.FALSE.equals(tokenExists)) {
-                // 장애 A: 토큰 미발급 — waiting 복귀 + capacity 복원
+                // 장애 A: 토큰 미발급 — waiting 복귀 + capacity quantity만큼 복원
                 masterRedisTemplate.opsForZSet().add(waitingKey, userId, originalScore);
                 masterRedisTemplate.opsForZSet().remove(processingKey, member);
-                masterRedisTemplate.opsForValue().increment(CAPACITY_KEY + productId);
-                log.info("Processing 복구 (장애 A): productId={}, userId={}, capacity 복원", productId, userId);
+
+                String qtyKey = TOKEN_QUANTITY_KEY + userId + ":" + productId;
+                String qtyStr = masterRedisTemplate.opsForValue().get(qtyKey);
+                long quantity = qtyStr != null ? Long.parseLong(qtyStr) : 1;
+                masterRedisTemplate.opsForValue().increment(CAPACITY_KEY + productId, quantity);
+                log.info("Processing 복구 (장애 A): productId={}, userId={}, capacity +{}", productId, userId, quantity);
             } else {
                 // 장애 B: 토큰 발급됨 — processing 정리만
                 masterRedisTemplate.opsForZSet().remove(processingKey, member);

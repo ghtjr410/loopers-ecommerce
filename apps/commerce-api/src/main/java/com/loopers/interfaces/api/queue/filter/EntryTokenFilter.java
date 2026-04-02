@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.loopers.application.queue.ModeManager;
 import com.loopers.application.queue.QueueService;
 import com.loopers.interfaces.api.ApiResponse;
+import com.loopers.interfaces.api.queue.config.QueueProperties;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -29,6 +30,7 @@ public class EntryTokenFilter extends OncePerRequestFilter {
 
     private final QueueService queueService;
     private final ModeManager modeManager;
+    private final QueueProperties queueProperties;
     private final ObjectMapper objectMapper;
 
     @Value("${auth.bypass.enabled:false}")
@@ -36,6 +38,7 @@ public class EntryTokenFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
+        if (!queueProperties.isTokenValidationEnabled()) return true;
         return !("POST".equals(request.getMethod())
                 && "/api/v1/orders".equals(request.getRequestURI()));
     }

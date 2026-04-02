@@ -43,8 +43,7 @@ public class QueueAdminV1Controller {
         for (Long productId : productIds) {
             Stock stock = stockService.getStock(productId);
             int available = stock.getAvailableQuantity();
-            int maxQty = maxQuantityPerUserMap.get(productId);
-            capacityService.initializeCapacity(productId, available, maxQty);
+            capacityService.initializeCapacity(productId, available);
         }
 
         modeManager.switchToHot(productIds, maxQuantityPerUserMap);

@@ -132,6 +132,9 @@ spring:
     activate:
       on-profile: local, test
 
+queue:
+  token-validation-enabled: false
+
 logging:
   level:
     io.github.resilience4j: DEBUG

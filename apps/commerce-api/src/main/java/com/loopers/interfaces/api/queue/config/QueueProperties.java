@@ -26,6 +26,9 @@ public class QueueProperties {
     // token-consumed TTL (Hard TTL + 여유)
     private int consumedTtlSeconds = 600;
 
+    // 토큰 검증
+    private boolean tokenValidationEnabled = true;
+
     // Rate Limit
     private int ipRateLimitPerSecond = 50;
     private int queueEnterLimitPerWindow = 1;
@@ -161,5 +164,13 @@ public class QueueProperties {
 
     public void setConsumedTtlSeconds(int consumedTtlSeconds) {
         this.consumedTtlSeconds = consumedTtlSeconds;
+    }
+
+    public boolean isTokenValidationEnabled() {
+        return tokenValidationEnabled;
+    }
+
+    public void setTokenValidationEnabled(boolean tokenValidationEnabled) {
+        this.tokenValidationEnabled = tokenValidationEnabled;
     }
 }
