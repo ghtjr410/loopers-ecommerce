@@ -2,6 +2,7 @@ package com.loopers.application.product;
 
 import com.loopers.application.brand.BrandService;
 import com.loopers.application.event.ProductViewedEvent;
+import com.loopers.application.queue.ModeManager;
 import com.loopers.application.stock.StockService;
 import com.loopers.domain.brand.Brand;
 import com.loopers.domain.stock.Stock;
@@ -34,6 +35,7 @@ public class ProductFacade {
     private final StockService stockService;
     private final ProductCacheManager productCacheManager;
     private final ApplicationEventPublisher eventPublisher;
+    private final ModeManager modeManager;
 
     // Command
 
@@ -49,6 +51,9 @@ public class ProductFacade {
 
     @Transactional
     public ProductInfo updateInfo(Long productId, ProductCommand.UpdateInfo command) {
+        if (command.stockQuantity() != null && (modeManager.isHot() || modeManager.isDrain())) {
+            throw new CoreException(ErrorType.BAD_REQUEST, "HOT/DRAIN 모드에서는 재고를 수정할 수 없습니다");
+        }
         Product product = productService.updateInfo(productId, command);
         if (command.stockQuantity() != null) {
             stockService.updateQuantity(productId, command.stockQuantity());

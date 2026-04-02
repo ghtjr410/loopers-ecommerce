@@ -5,6 +5,7 @@ import com.loopers.application.coupon.IssuedCouponSnapshot;
 import com.loopers.application.payment.PaymentCommand;
 import com.loopers.application.payment.PaymentFacade;
 import com.loopers.application.product.ProductService;
+import com.loopers.application.queue.ModeManager;
 import com.loopers.application.stock.StockService;
 import com.loopers.domain.order.Order;
 import com.loopers.domain.product.Product;
@@ -31,11 +32,13 @@ public class OrderFacade {
     private final StockService stockService;
     private final IssuedCouponService issuedCouponService;
     private final PaymentFacade paymentFacade;
+    private final ModeManager modeManager;
 
     // Command
 
     @Transactional
     public OrderInfo placeOrder(Long userId, OrderCommand.Place command) {
+        validateHotProductOrder(command);
 
         // -- 1단계: 검증 + 계산 (읽기/순수 연산, 상태 변경 없음) --
         Map<Long, Integer> productQuantities = command.toQuantityMap();
@@ -119,5 +122,21 @@ public class OrderFacade {
     public Page<OrderInfo.OrderAdminSummary> getAdminOrdersByProduct(Long productId, Pageable pageable) {
         Page<Order> orders = orderService.findOrdersByProductId(productId, pageable);
         return orders.map(OrderInfo.OrderAdminSummary::from);
+    }
+
+    private void validateHotProductOrder(OrderCommand.Place command) {
+        boolean hasHotProduct = command.items().stream()
+                .anyMatch(item -> modeManager.isHotProduct(item.productId()));
+        if (!hasHotProduct) return;
+
+        if (command.items().size() > 1) {
+            throw new CoreException(ErrorType.BAD_REQUEST, "한정 상품은 개별 주문해주세요");
+        }
+
+        OrderCommand.PlaceItem item = command.items().get(0);
+        int maxQty = modeManager.getMaxQuantityPerUser(item.productId());
+        if (item.quantity() > maxQty) {
+            throw new CoreException(ErrorType.BAD_REQUEST, "인당 최대 " + maxQty + "개까지 주문 가능합니다");
+        }
     }
 }
