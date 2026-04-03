@@ -28,4 +28,6 @@ public interface OrderRepository {
     int updateStatusIfCurrent(Long id, OrderStatus newStatus, OrderStatus currentStatus);
 
     List<Order> findAllByStatusAndCreatedAtBeforeWithItems(OrderStatus status, ZonedDateTime threshold);
+
+    int sumQuantityByUserIdAndProductId(Long userId, Long productId);
 }

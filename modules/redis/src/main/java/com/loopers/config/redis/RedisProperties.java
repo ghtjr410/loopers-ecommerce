@@ -8,5 +8,6 @@ import java.util.List;
 public record RedisProperties(
         int database,
         RedisNodeInfo master,
-        List<RedisNodeInfo> replicas
+        List<RedisNodeInfo> replicas,
+        Integer commandTimeout
 ) { }

@@ -14,6 +14,7 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -48,7 +49,12 @@ public class RedisConfig{
         RedisNodeInfo master = redisProperties.master();
         RedisStandaloneConfiguration standaloneConfig = new RedisStandaloneConfiguration(master.host(), master.port());
         standaloneConfig.setDatabase(redisProperties.database());
-        return new LettuceConnectionFactory(standaloneConfig);
+
+        LettuceClientConfiguration.LettuceClientConfigurationBuilder builder = LettuceClientConfiguration.builder();
+        applyCommandTimeout(builder);
+        LettuceClientConfiguration clientConfig = builder.build();
+
+        return new LettuceConnectionFactory(standaloneConfig, clientConfig);
     }
 
     @Qualifier(CONNECTION_MASTER)
@@ -87,6 +93,7 @@ public class RedisConfig{
             Consumer<LettuceClientConfiguration.LettuceClientConfigurationBuilder> customizer
     ){
         LettuceClientConfiguration.LettuceClientConfigurationBuilder builder = LettuceClientConfiguration.builder();
+        applyCommandTimeout(builder);
         if(customizer != null) customizer.accept(builder);
         LettuceClientConfiguration clientConfig = builder.build();
         RedisStaticMasterReplicaConfiguration masterReplicaConfig = new RedisStaticMasterReplicaConfiguration(master.host(), master.port());
@@ -95,6 +102,13 @@ public class RedisConfig{
             masterReplicaConfig.addNode(r.host(), r.port());
         }
         return new LettuceConnectionFactory(masterReplicaConfig, clientConfig);
+    }
+
+    private void applyCommandTimeout(LettuceClientConfiguration.LettuceClientConfigurationBuilder builder) {
+        Integer timeout = redisProperties.commandTimeout();
+        if (timeout != null && timeout > 0) {
+            builder.commandTimeout(Duration.ofMillis(timeout));
+        }
     }
 
     private <K,V> RedisTemplate<K,V> defaultRedisTemplate(

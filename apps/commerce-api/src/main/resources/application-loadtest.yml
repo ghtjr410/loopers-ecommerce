@@ -1,0 +1,47 @@
+# loadtest 프로필 — infra-spec 역산값 기반
+# 기존 application.yml + local 프로필을 상속하면서 아래 값만 오버라이드
+
+server:
+  tomcat:
+    threads:
+      max: 50               # CPU 2 × (1 + W/S 19) + 경량 버퍼
+      min-spare: 20          # burst cold start 방지
+    accept-count: 500        # 1,000명 burst 흡수
+    connection-timeout: 5000 # 느린 클라이언트 차단 (ms)
+
+datasource:
+  mysql-jpa:
+    main:
+      jdbc-url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/loopers
+      username: ${MYSQL_USER:application}
+      password: ${MYSQL_PWD:application}
+      maximum-pool-size: 30
+      minimum-idle: 20       # Tomcat min-spare(20)와 맞춤
+      connection-timeout: 3000   # 3초 (GC pause 고려, 1초 차이 실효성 없음)
+      max-lifetime: 900000       # 15분 (infra-spec 10분과 local 30분의 중간점)
+      idle-timeout: 300000       # 5분, 피크 후 자연 축소
+      leak-detection-threshold: 10000  # 10초, 비정상 점유 감지
+  redis:
+    command-timeout: 500     # Redis 명령 타임아웃 (ms)
+    master:
+      host: ${REDIS_MASTER_HOST:localhost}
+      port: ${REDIS_MASTER_PORT:6379}
+    replicas:
+      - host: ${REDIS_REPLICA_1_HOST:localhost}
+        port: ${REDIS_REPLICA_1_PORT:6380}
+
+auth:
+  bypass:
+    enabled: true              # X-Loopers-UserId 헤더로 인증 bypass (DB 조회 + BCrypt skip)
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: create       # 테스트 환경 — 스키마 자동 생성
+
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus

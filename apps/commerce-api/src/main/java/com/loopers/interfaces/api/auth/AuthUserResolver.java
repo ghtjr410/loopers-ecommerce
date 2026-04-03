@@ -6,6 +6,7 @@ import com.loopers.support.error.CoreException;
 import com.loopers.support.error.ErrorType;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.MethodParameter;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.support.WebDataBinderFactory;
@@ -19,8 +20,12 @@ public class AuthUserResolver implements HandlerMethodArgumentResolver {
 
     private static final String HEADER_LOGIN_ID = "X-Loopers-LoginId";
     private static final String HEADER_LOGIN_PW = "X-Loopers-LoginPw";
+    private static final String HEADER_USER_ID = "X-Loopers-UserId";
 
     private final UserService userService;
+
+    @Value("${auth.bypass.enabled:false}")
+    private boolean bypassEnabled;
 
     @Override
     public boolean supportsParameter(MethodParameter parameter) {
@@ -33,6 +38,14 @@ public class AuthUserResolver implements HandlerMethodArgumentResolver {
                                   NativeWebRequest webRequest,
                                   WebDataBinderFactory binderFactory) {
         HttpServletRequest request = (HttpServletRequest) webRequest.getNativeRequest();
+
+        if (bypassEnabled) {
+            String userId = request.getHeader(HEADER_USER_ID);
+            if (userId != null && !userId.isBlank()) {
+                return new AuthenticatedUser(Long.parseLong(userId));
+            }
+        }
+
         String loginId = request.getHeader(HEADER_LOGIN_ID);
         String password = request.getHeader(HEADER_LOGIN_PW);
 

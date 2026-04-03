@@ -101,4 +101,9 @@ public class OrderService {
     public List<Order> findCreatedOlderThanWithItems(ZonedDateTime threshold) {
         return orderRepository.findAllByStatusAndCreatedAtBeforeWithItems(OrderStatus.CREATED, threshold);
     }
+
+    @Transactional(readOnly = true)
+    public int getCumulativePurchaseQuantity(Long userId, Long productId) {
+        return orderRepository.sumQuantityByUserIdAndProductId(userId, productId);
+    }
 }

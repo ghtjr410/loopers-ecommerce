@@ -61,4 +61,10 @@ public interface OrderJpaRepository extends JpaRepository<Order, Long> {
          + "WHERE o.status = :status AND o.createdAt < :threshold")
     List<Order> findAllByStatusAndCreatedAtBeforeWithItems(@Param("status") OrderStatus status,
                                                            @Param("threshold") ZonedDateTime threshold);
+
+    @Query("SELECT COALESCE(SUM(oi.quantity), 0) FROM OrderItem oi "
+         + "JOIN oi.order o "
+         + "WHERE o.userId = :userId AND oi.productId = :productId "
+         + "AND o.status <> com.loopers.domain.order.OrderStatus.CANCELED")
+    int sumQuantityByUserIdAndProductId(@Param("userId") Long userId, @Param("productId") Long productId);
 }
