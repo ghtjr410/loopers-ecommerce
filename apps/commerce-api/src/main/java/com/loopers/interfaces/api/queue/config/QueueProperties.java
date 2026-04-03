@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class QueueProperties {
 
     // 대기열
-    private int maxQueueSize = 10000;
+    private int maxQueueSize = 50000;
 
     // TTL (초 단위)
     private int accessTtlSeconds = 60;
@@ -15,19 +15,15 @@ public class QueueProperties {
     private int maxExtensionsPerMinute = 2;
     private int gracePeriodSeconds = 60;
 
-    // Worker
-    private long workerEmptyQueueSleepMs = 100;
+    // 입장 스케줄러
+    private long admissionIntervalMs = 10_000;
+    private int admissionBatchSize = 1250;
 
-    // 스케줄러
+    // GC 스케줄러
     private long gcIntervalMs = 10_000;
-    private long processingRecoveryIntervalMs = 30_000;
-    private int processingTimeoutSeconds = 60;
 
-    // token-consumed TTL (Hard TTL + 여유)
-    private int consumedTtlSeconds = 600;
-
-    // 토큰 검증
-    private boolean tokenValidationEnabled = true;
+    // 세션 검증
+    private boolean sessionValidationEnabled = true;
 
     // Rate Limit
     private int ipRateLimitPerSecond = 50;
@@ -86,12 +82,20 @@ public class QueueProperties {
         this.gracePeriodSeconds = gracePeriodSeconds;
     }
 
-    public long getWorkerEmptyQueueSleepMs() {
-        return workerEmptyQueueSleepMs;
+    public long getAdmissionIntervalMs() {
+        return admissionIntervalMs;
     }
 
-    public void setWorkerEmptyQueueSleepMs(long workerEmptyQueueSleepMs) {
-        this.workerEmptyQueueSleepMs = workerEmptyQueueSleepMs;
+    public void setAdmissionIntervalMs(long admissionIntervalMs) {
+        this.admissionIntervalMs = admissionIntervalMs;
+    }
+
+    public int getAdmissionBatchSize() {
+        return admissionBatchSize;
+    }
+
+    public void setAdmissionBatchSize(int admissionBatchSize) {
+        this.admissionBatchSize = admissionBatchSize;
     }
 
     public long getGcIntervalMs() {
@@ -102,20 +106,12 @@ public class QueueProperties {
         this.gcIntervalMs = gcIntervalMs;
     }
 
-    public long getProcessingRecoveryIntervalMs() {
-        return processingRecoveryIntervalMs;
+    public boolean isSessionValidationEnabled() {
+        return sessionValidationEnabled;
     }
 
-    public void setProcessingRecoveryIntervalMs(long processingRecoveryIntervalMs) {
-        this.processingRecoveryIntervalMs = processingRecoveryIntervalMs;
-    }
-
-    public int getProcessingTimeoutSeconds() {
-        return processingTimeoutSeconds;
-    }
-
-    public void setProcessingTimeoutSeconds(int processingTimeoutSeconds) {
-        this.processingTimeoutSeconds = processingTimeoutSeconds;
+    public void setSessionValidationEnabled(boolean sessionValidationEnabled) {
+        this.sessionValidationEnabled = sessionValidationEnabled;
     }
 
     public int getIpRateLimitPerSecond() {
@@ -156,21 +152,5 @@ public class QueueProperties {
 
     public void setOrderLimitPerMinute(int orderLimitPerMinute) {
         this.orderLimitPerMinute = orderLimitPerMinute;
-    }
-
-    public int getConsumedTtlSeconds() {
-        return consumedTtlSeconds;
-    }
-
-    public void setConsumedTtlSeconds(int consumedTtlSeconds) {
-        this.consumedTtlSeconds = consumedTtlSeconds;
-    }
-
-    public boolean isTokenValidationEnabled() {
-        return tokenValidationEnabled;
-    }
-
-    public void setTokenValidationEnabled(boolean tokenValidationEnabled) {
-        this.tokenValidationEnabled = tokenValidationEnabled;
     }
 }

@@ -2,18 +2,18 @@ package com.loopers.application.queue.dto;
 
 public record QueuePositionResponse(
         long position,
-        String token,
-        Long estimatedWaitSeconds
+        Long estimatedWaitSeconds,
+        String status
 ) {
-    public static QueuePositionResponse ready(String token) {
-        return new QueuePositionResponse(0, token, null);
+    public static QueuePositionResponse ready() {
+        return new QueuePositionResponse(0, null, "READY");
     }
 
     public static QueuePositionResponse waiting(long position, long estimatedWaitSeconds) {
-        return new QueuePositionResponse(position, null, estimatedWaitSeconds);
+        return new QueuePositionResponse(position, estimatedWaitSeconds, "WAITING");
     }
 
     public static QueuePositionResponse notInQueue() {
-        return new QueuePositionResponse(-1, null, null);
+        return new QueuePositionResponse(-1, null, "NOT_IN_QUEUE");
     }
 }

@@ -1,8 +1,6 @@
 package com.loopers.application.payment;
 
 import com.loopers.application.coupon.IssuedCouponService;
-import com.loopers.application.queue.CapacityService;
-import com.loopers.application.queue.QueueService;
 import com.loopers.confg.kafka.KafkaTopics;
 import com.loopers.application.event.PaymentCanceledEvent;
 import com.loopers.application.event.PaymentCompletedEvent;
@@ -10,7 +8,6 @@ import com.loopers.application.event.PaymentFailedEvent;
 import com.loopers.application.order.OrderService;
 import com.loopers.application.stock.StockService;
 import com.loopers.domain.order.Order;
-import com.loopers.domain.order.OrderItem;
 import com.loopers.domain.payment.Payment;
 import com.loopers.infrastructure.outbox.OutboxEventService;
 import lombok.RequiredArgsConstructor;
@@ -27,8 +24,6 @@ public class PaymentProcessor {
     private final OrderService orderService;
     private final ApplicationEventPublisher eventPublisher;
     private final OutboxEventService outboxEventService;
-    private final QueueService queueService;
-    private final CapacityService capacityService;
 
     /**
      * PG 승인 성공 → 비즈니스 확정 (원자적)
@@ -42,11 +37,6 @@ public class PaymentProcessor {
         orderService.payOrder(orderId);
 
         Payment payment = paymentService.getPayment(paymentId);
-        for (OrderItem item : order.getOrderItems()) {
-            capacityService.markConsumed(order.getUserId(), item.getProductId());
-            queueService.deleteToken(order.getUserId(), item.getProductId());
-            capacityService.deleteQuantity(order.getUserId(), item.getProductId());
-        }
         eventPublisher.publishEvent(new PaymentCompletedEvent(
                 paymentId, orderId, payment.getUserId(), payment.getAmount()));
         outboxEventService.saveAndPublish("payment.completed", "Order",

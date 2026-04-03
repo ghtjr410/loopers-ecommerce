@@ -10,16 +10,21 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * 순번 폴링 부하 감소용 인메모리 캐시.
+ * 1초마다 ZRANGE → 인메모리 Map 갱신.
+ * N명의 폴링을 1회 ZRANGE로 흡수 (Request Coalescing).
+ */
 @Slf4j
 @Component
 public class PositionCacheScheduler {
 
-    private static final String WAITING_QUEUE_KEY = "waiting-queue:";
+    private static final String WAITING_QUEUE_KEY = "waiting-queue:bf-2025";
 
     private final RedisTemplate<String, String> defaultRedisTemplate;
     private final ModeManager modeManager;
 
-    private final Map<Long, Map<String, Long>> rankCache = new ConcurrentHashMap<>();
+    private volatile Map<String, Long> rankCache = Map.of();
 
     public PositionCacheScheduler(
             RedisTemplate<String, String> defaultRedisTemplate,
@@ -31,36 +36,31 @@ public class PositionCacheScheduler {
 
     @Scheduled(fixedRate = 1000)
     public void refreshRankCache() {
-        if (!modeManager.isHot()) {
-            rankCache.clear();
+        if (!modeManager.isEvent()) {
+            rankCache = Map.of();
             return;
         }
 
-        for (Long productId : modeManager.getHotProductIds()) {
-            try {
-                Set<String> members = defaultRedisTemplate.opsForZSet()
-                        .range(WAITING_QUEUE_KEY + productId, 0, -1);
+        try {
+            Set<String> members = defaultRedisTemplate.opsForZSet().range(WAITING_QUEUE_KEY, 0, -1);
 
-                if (members == null || members.isEmpty()) {
-                    rankCache.put(productId, Map.of());
-                    continue;
-                }
-
-                Map<String, Long> positions = new ConcurrentHashMap<>();
-                long rank = 0;
-                for (String member : members) {
-                    positions.put(member, ++rank);
-                }
-                rankCache.put(productId, positions);
-            } catch (Exception e) {
-                log.warn("순번 캐시 갱신 실패: productId={}", productId, e);
+            if (members == null || members.isEmpty()) {
+                rankCache = Map.of();
+                return;
             }
+
+            Map<String, Long> positions = new ConcurrentHashMap<>();
+            long rank = 0;
+            for (String member : members) {
+                positions.put(member, ++rank);
+            }
+            rankCache = positions;
+        } catch (Exception e) {
+            log.warn("순번 캐시 갱신 실패", e);
         }
     }
 
-    public Long getCachedPosition(Long productId, Long userId) {
-        Map<String, Long> positions = rankCache.get(productId);
-        if (positions == null) return null;
-        return positions.get(userId.toString());
+    public Long getCachedPosition(Long userId) {
+        return rankCache.get(userId.toString());
     }
 }

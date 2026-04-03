@@ -1,6 +1,6 @@
 package com.loopers.interfaces.api.queue;
 
-import com.loopers.application.queue.QueueService;
+import com.loopers.application.queue.QueueFacade;
 import com.loopers.application.queue.dto.QueueEntryResponse;
 import com.loopers.application.queue.dto.QueuePositionResponse;
 import com.loopers.interfaces.api.ApiResponse;
@@ -10,7 +10,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -18,28 +17,21 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class QueueV1Controller {
 
-    private final QueueService queueService;
+    private final QueueFacade queueFacade;
 
     // Command
 
     @PostMapping("/enter")
-    public ApiResponse<QueueEntryResponse> enter(
-            @AuthUser AuthenticatedUser user,
-            @RequestParam Long productId,
-            @RequestParam(defaultValue = "1") int quantity
-    ) {
-        QueueEntryResponse response = queueService.enter(user.id(), productId, quantity);
+    public ApiResponse<QueueEntryResponse> enter(@AuthUser AuthenticatedUser user) {
+        QueueEntryResponse response = queueFacade.enter(user.id());
         return ApiResponse.success(response);
     }
 
     // Query
 
     @GetMapping("/position")
-    public ApiResponse<QueuePositionResponse> getPosition(
-            @AuthUser AuthenticatedUser user,
-            @RequestParam Long productId
-    ) {
-        QueuePositionResponse response = queueService.getPosition(user.id(), productId);
+    public ApiResponse<QueuePositionResponse> getPosition(@AuthUser AuthenticatedUser user) {
+        QueuePositionResponse response = queueFacade.getPosition(user.id());
         return ApiResponse.success(response);
     }
 }

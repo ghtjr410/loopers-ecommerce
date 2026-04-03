@@ -1,78 +1,44 @@
 package com.loopers.interfaces.scheduler;
 
-import com.loopers.application.queue.CapacityService;
 import com.loopers.application.queue.ModeManager;
-import com.loopers.application.stock.StockService;
+import com.loopers.application.queue.QueueService;
 import com.loopers.interfaces.api.queue.filter.EarlyRejectionFilter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
 
 @Slf4j
 @Component
 public class QueueCacheScheduler {
 
-    private static final String WAITING_QUEUE_KEY = "waiting-queue:";
-
-    private final RedisTemplate<String, String> defaultRedisTemplate;
+    private final QueueService queueService;
     private final EarlyRejectionFilter earlyRejectionFilter;
     private final ModeManager modeManager;
-    private final CapacityService capacityService;
-    private final StockService stockService;
+    private final MeterRegistry meterRegistry;
 
     public QueueCacheScheduler(
-            RedisTemplate<String, String> defaultRedisTemplate,
+            QueueService queueService,
             EarlyRejectionFilter earlyRejectionFilter,
             ModeManager modeManager,
-            CapacityService capacityService,
-            StockService stockService
+            MeterRegistry meterRegistry
     ) {
-        this.defaultRedisTemplate = defaultRedisTemplate;
+        this.queueService = queueService;
         this.earlyRejectionFilter = earlyRejectionFilter;
         this.modeManager = modeManager;
-        this.capacityService = capacityService;
-        this.stockService = stockService;
+        this.meterRegistry = meterRegistry;
     }
 
     @Scheduled(fixedRate = 2000)
-    public void updateSoldOutFromDB() {
-        if (modeManager.isHot()) return;
-        try {
-            Set<Long> soldOut = stockService.findSoldOutProductIds();
-            earlyRejectionFilter.updateSoldOutProducts(soldOut);
-        } catch (Exception e) {
-            log.warn("매진 상품 캐시 갱신 실패", e);
+    public void updateQueueSize() {
+        if (!modeManager.isEvent() && !modeManager.isDrain()) {
+            return;
         }
-    }
-
-    @Scheduled(fixedRate = 500)
-    public void updateCapacityRemaining() {
-        if (!modeManager.isHot()) return;
         try {
-            Map<Long, Long> remaining = new HashMap<>();
-            for (Long productId : modeManager.getHotProductIds()) {
-                remaining.put(productId, capacityService.getRemaining(productId));
-            }
-            earlyRejectionFilter.updateCapacityRemaining(remaining);
-        } catch (Exception e) {
-            log.warn("용량 잔여 캐시 갱신 실패", e);
-        }
-    }
-
-    @Scheduled(fixedRate = 2000)
-    public void updateQueueSizes() {
-        try {
-            Map<Long, Long> sizes = new HashMap<>();
-            for (Long productId : modeManager.getHotProductIds()) {
-                Long size = defaultRedisTemplate.opsForZSet().zCard(WAITING_QUEUE_KEY + productId);
-                sizes.put(productId, size != null ? size : 0);
-            }
-            earlyRejectionFilter.updateQueueSizes(sizes);
+            long size = queueService.getQueueSize();
+            earlyRejectionFilter.updateQueueSize(size);
+            meterRegistry.gauge("queue.depth", Tags.empty(), size);
         } catch (Exception e) {
             log.warn("대기열 크기 캐시 갱신 실패", e);
         }

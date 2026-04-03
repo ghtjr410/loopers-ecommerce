@@ -133,7 +133,7 @@ spring:
       on-profile: local, test
 
 queue:
-  token-validation-enabled: false
+  session-validation-enabled: false
 
 logging:
   level:

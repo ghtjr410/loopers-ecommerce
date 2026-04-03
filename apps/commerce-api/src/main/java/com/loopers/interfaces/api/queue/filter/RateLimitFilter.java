@@ -3,13 +3,13 @@ package com.loopers.interfaces.api.queue.filter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.loopers.interfaces.api.ApiResponse;
 import com.loopers.interfaces.api.queue.config.QueueProperties;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.Order;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -21,7 +21,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.Collections;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -41,19 +40,19 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final RedisTemplate<String, String> masterRedisTemplate;
     private final QueueProperties props;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
     private final ConcurrentHashMap<String, AtomicInteger> ipCounters = new ConcurrentHashMap<>();
-
-    @Value("${auth.bypass.enabled:false}")
-    private boolean bypassEnabled;
 
     public RateLimitFilter(
             @Qualifier("redisTemplateMaster") RedisTemplate<String, String> masterRedisTemplate,
             QueueProperties props,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            MeterRegistry meterRegistry
     ) {
         this.masterRedisTemplate = masterRedisTemplate;
         this.props = props;
         this.objectMapper = objectMapper;
+        this.meterRegistry = meterRegistry;
     }
 
     @Scheduled(fixedRate = 1000)
@@ -64,7 +63,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String uri = request.getRequestURI();
-        return !(uri.startsWith("/api/v1/queue") || uri.equals("/api/v1/orders"));
+        return !(uri.startsWith("/api/v1/queue")
+                || uri.equals("/api/v1/orders")
+                || uri.startsWith("/api/v1/products"));
     }
 
     @Override
@@ -73,6 +74,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
                                     FilterChain filterChain) throws ServletException, IOException {
         String ip = request.getRemoteAddr();
         if (isIpRateLimited(ip)) {
+            meterRegistry.counter("rate.limited.ip.total").increment();
             response.setHeader("Retry-After", "1");
             reject(response, "IP 요청 한도를 초과했습니다");
             return;
@@ -80,6 +82,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         Long userId = extractUserId(request);
         if (userId != null && isUserRateLimited(userId, request)) {
+            meterRegistry.counter("rate.limited.user.total").increment();
             response.setHeader("Retry-After", "10");
             reject(response, "요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요");
             return;
@@ -138,18 +141,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private Long extractUserId(HttpServletRequest request) {
-        if (!bypassEnabled) {
-            return null;
+        Object attr = request.getAttribute(QueueAuthFilter.ATTR_QUEUE_USER_ID);
+        if (attr instanceof Long userId) {
+            return userId;
         }
-        String userIdHeader = request.getHeader("X-Loopers-UserId");
-        if (userIdHeader == null || userIdHeader.isBlank()) {
-            return null;
-        }
-        try {
-            return Long.parseLong(userIdHeader);
-        } catch (NumberFormatException e) {
-            return null;
-        }
+        return null;
     }
 
     private void reject(HttpServletResponse response, String message) throws IOException {

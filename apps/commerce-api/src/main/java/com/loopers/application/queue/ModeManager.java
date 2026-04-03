@@ -4,32 +4,23 @@ import com.loopers.interfaces.api.queue.config.QueueProperties;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
-import java.util.Map;
-import java.util.Set;
 
 @Component
 public class ModeManager {
 
-    public enum Mode { NORMAL, HOT, DRAIN }
+    public enum Mode { NORMAL, EVENT, DRAIN }
 
     public record ModeState(
             Mode mode,
-            Set<Long> hotProductIds,
-            Map<Long, Integer> maxQuantityPerUserMap,
             Instant graceDeadline
     ) {
         static ModeState normal() {
-            return new ModeState(Mode.NORMAL, Set.of(), Map.of(), Instant.MIN);
+            return new ModeState(Mode.NORMAL, Instant.MIN);
         }
 
-        boolean isHot() { return mode == Mode.HOT; }
+        boolean isEvent() { return mode == Mode.EVENT; }
         boolean isDrain() { return mode == Mode.DRAIN; }
-        boolean isHotProduct(Long productId) { return hotProductIds.contains(productId); }
-        boolean isInGracePeriod() { return Instant.now().isBefore(graceDeadline); }
-
-        int getMaxQuantityPerUser(Long productId) {
-            return maxQuantityPerUserMap.getOrDefault(productId, 1);
-        }
+        boolean isInGracePeriod() { return mode == Mode.DRAIN && Instant.now().isBefore(graceDeadline); }
     }
 
     private final QueueProperties queueProperties;
@@ -43,26 +34,21 @@ public class ModeManager {
 
     // 편의 메서드 — state에 위임
 
-    public boolean isHot() { return state.isHot(); }
+    public boolean isEvent() { return state.isEvent(); }
     public boolean isDrain() { return state.isDrain(); }
-    public boolean isHotProduct(Long productId) { return state.isHotProduct(productId); }
     public boolean isInGracePeriod() { return state.isInGracePeriod(); }
-    public Set<Long> getHotProductIds() { return state.hotProductIds(); }
-    public int getMaxQuantityPerUser(Long productId) { return state.getMaxQuantityPerUser(productId); }
 
     // 원자적 전환 — volatile write 1회
 
-    public void switchToHot(Set<Long> productIds, Map<Long, Integer> maxQtyMap) {
-        this.state = new ModeState(
-                Mode.HOT, Set.copyOf(productIds), Map.copyOf(maxQtyMap),
-                Instant.now().plusSeconds(queueProperties.getGracePeriodSeconds())
-        );
+    public void switchToEvent() {
+        this.state = new ModeState(Mode.EVENT, Instant.MIN);
     }
 
     public void switchToDrain() {
-        ModeState cur = this.state;
-        this.state = new ModeState(Mode.DRAIN, cur.hotProductIds(),
-                cur.maxQuantityPerUserMap(), cur.graceDeadline());
+        this.state = new ModeState(
+                Mode.DRAIN,
+                Instant.now().plusSeconds(queueProperties.getGracePeriodSeconds())
+        );
     }
 
     public void switchToNormal() {

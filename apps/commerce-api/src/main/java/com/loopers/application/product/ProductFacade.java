@@ -51,8 +51,8 @@ public class ProductFacade {
 
     @Transactional
     public ProductInfo updateInfo(Long productId, ProductCommand.UpdateInfo command) {
-        if (command.stockQuantity() != null && (modeManager.isHot() || modeManager.isDrain())) {
-            throw new CoreException(ErrorType.BAD_REQUEST, "HOT/DRAIN 모드에서는 재고를 수정할 수 없습니다");
+        if (command.stockQuantity() != null && (modeManager.isEvent() || modeManager.isDrain())) {
+            throw new CoreException(ErrorType.LOCKED, "EVENT/DRAIN 모드에서는 재고를 수정할 수 없습니다");
         }
         Product product = productService.updateInfo(productId, command);
         if (command.stockQuantity() != null) {

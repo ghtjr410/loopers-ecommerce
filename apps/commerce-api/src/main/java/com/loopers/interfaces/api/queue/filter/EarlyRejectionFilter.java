@@ -15,9 +15,9 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 import java.io.IOException;
-import java.util.Map;
-import java.util.Set;
 
 @Component
 @Order(2)
@@ -27,10 +27,9 @@ public class EarlyRejectionFilter extends OncePerRequestFilter {
     private final ModeManager modeManager;
     private final QueueProperties props;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
 
-    private volatile Set<Long> soldOutProducts = Set.of();
-    private volatile Map<Long, Long> capacityRemaining = Map.of();
-    private volatile Map<Long, Long> queueSizes = Map.of();
+    private volatile long currentQueueSize = 0;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -42,26 +41,16 @@ public class EarlyRejectionFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        String productIdParam = request.getParameter("productId");
-        if (productIdParam == null) {
-            filterChain.doFilter(request, response);
+        // DRAIN 모드: 새 진입 거부
+        if (modeManager.isDrain()) {
+            meterRegistry.counter("early.rejection.total", "reason", "DRAIN").increment();
+            reject(response, HttpStatus.SERVICE_UNAVAILABLE, "DRAIN", "대기열이 마감되었습니다");
             return;
         }
 
-        Long productId;
-        try {
-            productId = Long.parseLong(productIdParam);
-        } catch (NumberFormatException e) {
-            filterChain.doFilter(request, response);
-            return;
-        }
-
-        if (isSoldOut(productId)) {
-            reject(response, HttpStatus.GONE, "SOLD_OUT", "해당 상품은 매진되었습니다");
-            return;
-        }
-
-        if (isQueueFull(productId)) {
+        // 큐 만석 확인
+        if (currentQueueSize >= props.getMaxQueueSize()) {
+            meterRegistry.counter("early.rejection.total", "reason", "QUEUE_FULL").increment();
             response.setHeader("Retry-After", "10");
             reject(response, HttpStatus.SERVICE_UNAVAILABLE, "QUEUE_FULL", "대기열이 가득 찼습니다. 잠시 후 다시 시도해주세요");
             return;
@@ -70,29 +59,8 @@ public class EarlyRejectionFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private boolean isSoldOut(Long productId) {
-        if (modeManager.isHotProduct(productId)) {
-            Long remaining = capacityRemaining.get(productId);
-            return remaining != null && remaining <= 0;
-        }
-        return soldOutProducts.contains(productId);
-    }
-
-    private boolean isQueueFull(Long productId) {
-        Long size = queueSizes.get(productId);
-        return size != null && size >= props.getMaxQueueSize();
-    }
-
-    public void updateSoldOutProducts(Set<Long> products) {
-        this.soldOutProducts = products;
-    }
-
-    public void updateCapacityRemaining(Map<Long, Long> remaining) {
-        this.capacityRemaining = remaining;
-    }
-
-    public void updateQueueSizes(Map<Long, Long> sizes) {
-        this.queueSizes = sizes;
+    public void updateQueueSize(long size) {
+        this.currentQueueSize = size;
     }
 
     private void reject(HttpServletResponse response, HttpStatus status,
