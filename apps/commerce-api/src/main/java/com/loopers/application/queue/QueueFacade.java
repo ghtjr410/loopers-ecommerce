@@ -131,6 +131,15 @@ public class QueueFacade {
     // Query
 
     public QueuePositionResponse getPosition(Long userId) {
+        // DRAIN/NORMAL: 스케줄러 중단 → 대기열 유저에게 종료 알림
+        if (!modeManager.isEvent()) {
+            // 이미 입장한 유저는 세션으로 블프 이용 중 → READY
+            if (sessionService.hasActiveSession(userId)) {
+                return QueuePositionResponse.ready();
+            }
+            return QueuePositionResponse.eventEnded();
+        }
+
         if (sessionService.hasActiveSession(userId)) {
             return QueuePositionResponse.ready();
         }

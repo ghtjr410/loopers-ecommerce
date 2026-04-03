@@ -16,4 +16,8 @@ public record QueuePositionResponse(
     public static QueuePositionResponse notInQueue() {
         return new QueuePositionResponse(-1, null, "NOT_IN_QUEUE");
     }
+
+    public static QueuePositionResponse eventEnded() {
+        return new QueuePositionResponse(-1, null, "EVENT_ENDED");
+    }
 }
